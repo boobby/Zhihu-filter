@@ -9,6 +9,11 @@
   let currentKeywords = [];
   let currentMatchers = MATCHER.buildMatchers(currentKeywords);
 
+  // Quick Add Keyword UI state
+  let quickAddBtn = null;
+  let quickAddHideTimer = null;
+  let quickAddCurrentText = "";
+
   function log(...args) {
     try { console.log(LOG_PREFIX, ...args); } catch (_) {}
   }
@@ -88,8 +93,8 @@
     
     // 截取标题前20个字符
     let truncatedTitle = titleText || "未知标题";
-    if (truncatedTitle.length > 20) {
-      truncatedTitle = truncatedTitle.substring(0, 20) + "...";
+    if (truncatedTitle.length > 30) {
+      truncatedTitle = truncatedTitle.substring(0, 30) + "...";
     }
     
     const id = cardEl.getAttribute(CARD_ID_ATTR) || genId();
@@ -218,6 +223,116 @@
     currentMatchers = MATCHER.buildMatchers(currentKeywords);
   }
 
+  // ========== Quick Add Keyword UI ==========
+  function sanitizeSelectionText(raw) {
+    try {
+      return String(raw || "")
+        .replace(/[\u200B-\u200D\uFEFF]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function getCurrentSelectionText() {
+    try {
+      const sel = window.getSelection && window.getSelection();
+      if (!sel || sel.isCollapsed) return "";
+      if (sel.rangeCount === 0) return "";
+      const text = sel.toString();
+      return sanitizeSelectionText(text);
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function ensureQuickAddButton() {
+    if (quickAddBtn) return quickAddBtn;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "zhihu-filter__quick-add";
+    btn.textContent = "屏蔽此词";
+    // Prevent losing selection when clicking
+    btn.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    // Click handler: add keyword then give lightweight feedback
+    btn.addEventListener("click", async function () {
+      if (!quickAddCurrentText) { hideQuickAddButton(); return; }
+      const original = btn.textContent;
+      btn.disabled = true;
+      try {
+        btn.textContent = "添加中...";
+        const res = await addKeywordAndRefresh(quickAddCurrentText);
+        if (res && res.ok) {
+          btn.textContent = res.added ? "已加入" : "已存在";
+        } else {
+          btn.textContent = "失败";
+        }
+      } catch (_) {
+        btn.textContent = "失败";
+      } finally {
+        setTimeout(() => { hideQuickAddButton(); btn.disabled = false; btn.textContent = original; }, 800);
+      }
+    });
+    document.documentElement.appendChild(btn);
+    quickAddBtn = btn;
+    return quickAddBtn;
+  }
+
+  function hideQuickAddButton() {
+    if (!quickAddBtn) return;
+    quickAddBtn.classList.remove("zhihu-filter__quick-add--show");
+    quickAddBtn.style.top = "-9999px";
+    quickAddBtn.style.left = "-9999px";
+    if (quickAddHideTimer) {
+      clearTimeout(quickAddHideTimer);
+      quickAddHideTimer = null;
+    }
+  }
+
+  function positionAndShowQuickAddButton(rect) {
+    const btn = ensureQuickAddButton();
+    if (!rect) { hideQuickAddButton(); return; }
+    const margin = 8;
+    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    let left = Math.min(rect.right + margin, vw - 80);
+    let top = Math.min(rect.bottom + margin, vh - 40);
+    if (left < margin) left = margin;
+    if (top < margin) top = margin;
+    btn.style.left = left + "px";
+    btn.style.top = top + "px";
+    btn.classList.add("zhihu-filter__quick-add--show");
+    if (quickAddHideTimer) clearTimeout(quickAddHideTimer);
+    quickAddHideTimer = setTimeout(() => {
+      hideQuickAddButton();
+    }, 3000);
+  }
+
+  async function addKeywordAndRefresh(keyword) {
+    try {
+      const k = MATCHER.normalizeKeyword(keyword);
+      if (!k) return { ok: false, reason: "empty" };
+      if (k.length > 64) return { ok: false, reason: "too_long" };
+      const { keywords } = await STORAGE.loadKeywords();
+      const list = Array.isArray(keywords) ? keywords.slice() : [];
+      const exists = new Set(list.map(s => String(s || "").toLowerCase()));
+      const lk = k.toLowerCase();
+      if (!exists.has(lk)) {
+        list.push(k);
+        await STORAGE.saveKeywords(list);
+      }
+      // update local state immediately
+      currentKeywords = list;
+      rebuildMatchers();
+      scanRoot(document);
+      return { ok: true, added: !exists.has(lk) };
+    } catch (err) {
+      log("addKeyword error", err);
+      return { ok: false, reason: "error" };
+    }
+  }
+
   async function init() {
     try {
       const { keywords } = await STORAGE.loadKeywords();
@@ -238,9 +353,35 @@
     }
   }
 
+  function maybeShowQuickAddForSelection() {
+    const text = getCurrentSelectionText();
+    quickAddCurrentText = text;
+    if (!text || text.length < 1 || text.length > 64) {
+      hideQuickAddButton();
+      return;
+    }
+    // position based on first range rect
+    try {
+      const sel = window.getSelection && window.getSelection();
+      if (!sel || sel.rangeCount === 0) { hideQuickAddButton(); return; }
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      if (!rect || (rect.width === 0 && rect.height === 0)) { hideQuickAddButton(); return; }
+      positionAndShowQuickAddButton(rect);
+    } catch (_) {
+      hideQuickAddButton();
+    }
+  }
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("selectionchange", maybeShowQuickAddForSelection);
+    document.addEventListener("mouseup", maybeShowQuickAddForSelection, true);
+    document.addEventListener("keyup", maybeShowQuickAddForSelection, true);
   } else {
     init();
+    document.addEventListener("selectionchange", maybeShowQuickAddForSelection);
+    document.addEventListener("mouseup", maybeShowQuickAddForSelection, true);
+    document.addEventListener("keyup", maybeShowQuickAddForSelection, true);
   }
 })();
