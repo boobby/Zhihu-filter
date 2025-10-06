@@ -86,13 +86,19 @@
     // 记录拦截日志
     log("拦截标题:", titleText || "未知标题", "(匹配关键词:", keyword || "未知关键词", ")");
     
+    // 截取标题前20个字符
+    let truncatedTitle = titleText || "未知标题";
+    if (truncatedTitle.length > 20) {
+      truncatedTitle = truncatedTitle.substring(0, 20) + "...";
+    }
+    
     const id = cardEl.getAttribute(CARD_ID_ATTR) || genId();
     cardEl.setAttribute(CARD_ID_ATTR, id);
 
     const placeholder = document.createElement("div");
     placeholder.className = "zhihu-filter__placeholder";
     placeholder.setAttribute("data-target", id);
-    placeholder.textContent = `已折叠一条问题卡片（匹配：${keyword || "关键词"}）`;
+    placeholder.textContent = `${keyword || "关键词"}（${truncatedTitle}）`;
 
     const btn = document.createElement("button");
     btn.type = "button";
