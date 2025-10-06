@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Zhihu Keyword Filter - Options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Zhihu Keyword Filter</h1>
+    <p>每行一个关键词（大小写不敏感；整词匹配；CJK按整短语）。</p>
+    <textarea id="keywords" placeholder="在此粘贴或输入关键词，每行一个"></textarea>
+    <div class="actions">
+      <button id="save">保存</button>
+      <button id="export">导出</button>
+      <label class="import-label">
+        导入
+        <input type="file" id="import" accept=".txt,.json" style="display:none;" />
+      </label>
+    </div>
+    <div id="status" class="status"></div>
+  </div>
+  <script src="../src/storage.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

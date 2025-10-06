@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Zhihu Keyword Filter",
+  "version": "0.1.0",
+  "description": "Collapse Zhihu question cards whose titles match your blocked keywords.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.zhihu.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.zhihu.com/*"],
+      "js": [
+        "src/storage.js",
+        "src/matcher.js",
+        "src/content.js"
+      ],
+      "css": ["src/styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options/options.html"
+}

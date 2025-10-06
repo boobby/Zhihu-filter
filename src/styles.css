@@ -1,0 +1,15 @@
+.zhihu-filter__placeholder {
+  display: block;
+  padding: 12px 14px;
+  margin: 8px 0;
+  border: 1px dashed rgba(0,0,0,0.15);
+  background: rgba(0,0,0,0.03);
+  color: #444;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.zhihu-filter__placeholder button {
+  margin-left: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
