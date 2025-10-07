@@ -1,6 +1,9 @@
 const STORAGE_KEY = "zhihuFilter";
+const TITLE_HISTORY_KEY = "zhihuFilterTitleHistory";
 const KEYWORD_MAX_LEN = 64;
 const KEYWORD_TOTAL_MAX = 2000;
+const TITLE_HISTORY_MAX = 1000;
+const TITLE_HISTORY_EXPIRE_DAYS = 60;
 
 function sanitizeKeywords(inputList) {
   if (!Array.isArray(inputList)) return [];
@@ -66,8 +69,138 @@ function onKeywordsChanged(handler) {
   return () => chrome.storage.onChanged.removeListener(listener);
 }
 
+// ========== Title History Management ==========
+
+function sanitizeTitleHistory(inputList) {
+  if (!Array.isArray(inputList)) return [];
+  const seen = new Set();
+  const result = [];
+  const now = Date.now();
+  const expireTime = now - (TITLE_HISTORY_EXPIRE_DAYS * 24 * 60 * 60 * 1000);
+  
+  for (const item of inputList) {
+    if (!item || typeof item !== "object") continue;
+    const { title, timestamp, id } = item;
+    if (typeof title !== "string" || !title.trim()) continue;
+    if (typeof timestamp !== "number" || timestamp < expireTime) continue;
+    if (typeof id !== "string" || !id) continue;
+    
+    const normalizedTitle = title.trim().toLowerCase();
+    if (seen.has(normalizedTitle)) continue;
+    seen.add(normalizedTitle);
+    result.push({ title: title.trim(), timestamp, id });
+    if (result.length >= TITLE_HISTORY_MAX) break;
+  }
+  return result;
+}
+
+async function loadTitleHistory() {
+  try {
+    const data = await chrome.storage.local.get(TITLE_HISTORY_KEY);
+    const history = data && data[TITLE_HISTORY_KEY];
+    if (Array.isArray(history)) {
+      return sanitizeTitleHistory(history);
+    }
+    return [];
+  } catch (err) {
+    console.log("[ZhihuFilter] loadTitleHistory error", err);
+    return [];
+  }
+}
+
+async function saveTitleHistory(history) {
+  try {
+    const sanitized = sanitizeTitleHistory(history);
+    await chrome.storage.local.set({ [TITLE_HISTORY_KEY]: sanitized });
+  } catch (err) {
+    console.log("[ZhihuFilter] saveTitleHistory error", err);
+  }
+}
+
+async function addTitleToHistory(title) {
+  try {
+    if (!title || typeof title !== "string") return false;
+    const normalizedTitle = title.trim();
+    if (!normalizedTitle) return false;
+    
+    const history = await loadTitleHistory();
+    const now = Date.now();
+    const id = Math.random().toString(36).slice(2, 10);
+    
+    // 检查是否已存在
+    const exists = history.some(item => 
+      item.title.toLowerCase() === normalizedTitle.toLowerCase()
+    );
+    
+    if (!exists) {
+      history.unshift({ title: normalizedTitle, timestamp: now, id });
+      await saveTitleHistory(history);
+    }
+    
+    return true;
+  } catch (err) {
+    console.log("[ZhihuFilter] addTitleToHistory error", err);
+    return false;
+  }
+}
+
+async function cleanExpiredTitles() {
+  try {
+    const history = await loadTitleHistory();
+    const now = Date.now();
+    const expireTime = now - (TITLE_HISTORY_EXPIRE_DAYS * 24 * 60 * 60 * 1000);
+    
+    const validHistory = history.filter(item => item.timestamp >= expireTime);
+    
+    if (validHistory.length !== history.length) {
+      await saveTitleHistory(validHistory);
+      console.log(`[ZhihuFilter] Cleaned ${history.length - validHistory.length} expired titles`);
+    }
+    
+    return validHistory;
+  } catch (err) {
+    console.log("[ZhihuFilter] cleanExpiredTitles error", err);
+    return [];
+  }
+}
+
+async function isTitleSeen(title) {
+  try {
+    if (!title || typeof title !== "string") return false;
+    const normalizedTitle = title.trim().toLowerCase();
+    if (!normalizedTitle) return false;
+    
+    const history = await loadTitleHistory();
+    return history.some(item => 
+      item.title.toLowerCase() === normalizedTitle
+    );
+  } catch (err) {
+    console.log("[ZhihuFilter] isTitleSeen error", err);
+    return false;
+  }
+}
+
+function onTitleHistoryChanged(handler) {
+  function listener(changes, areaName) {
+    if (areaName !== "local") return;
+    const change = changes[TITLE_HISTORY_KEY];
+    if (!change) return;
+    const next = change.newValue;
+    const history = Array.isArray(next) ? sanitizeTitleHistory(next) : [];
+    try { handler(history); } catch (_) {}
+  }
+  chrome.storage.onChanged.addListener(listener);
+  return () => chrome.storage.onChanged.removeListener(listener);
+}
+
 window.ZhihuFilterStorage = {
   loadKeywords,
   saveKeywords,
-  onKeywordsChanged
+  onKeywordsChanged,
+  loadTitleHistory,
+  saveTitleHistory,
+  addTitleToHistory,
+  cleanExpiredTitles,
+  isTitleSeen,
+  onTitleHistoryChanged
 };

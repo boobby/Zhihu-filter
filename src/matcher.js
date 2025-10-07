@@ -57,8 +57,49 @@ function matchText(text, matchers) {
   return { matched: false };
 }
 
+// ========== Title History Matching ==========
+
+function normalizeTitleForHistory(title) {
+  return (title || "").trim().toLowerCase();
+}
+
+function buildTitleHistoryMatcher(history) {
+  if (!Array.isArray(history) || history.length === 0) {
+    return { titleSet: new Set() };
+  }
+  
+  const titleSet = new Set();
+  for (const item of history) {
+    if (item && typeof item.title === "string") {
+      const normalized = normalizeTitleForHistory(item.title);
+      if (normalized) {
+        titleSet.add(normalized);
+      }
+    }
+  }
+  
+  return { titleSet };
+}
+
+function matchTitleHistory(text, matcher) {
+  if (!text || !matcher || !matcher.titleSet) {
+    return { matched: false };
+  }
+  
+  const normalizedText = normalizeTitleForHistory(text);
+  if (!normalizedText) {
+    return { matched: false };
+  }
+  
+  const matched = matcher.titleSet.has(normalizedText);
+  return { matched, keyword: matched ? "重复内容" : null };
+}
+
 window.ZhihuFilterMatcher = {
   buildMatchers,
   matchText,
-  normalizeKeyword
+  normalizeKeyword,
+  buildTitleHistoryMatcher,
+  matchTitleHistory,
+  normalizeTitleForHistory
 };

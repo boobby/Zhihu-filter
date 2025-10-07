@@ -8,6 +8,9 @@
 
   let currentKeywords = [];
   let currentMatchers = MATCHER.buildMatchers(currentKeywords);
+  let currentTitleHistory = [];
+  let currentTitleHistoryMatcher = MATCHER.buildTitleHistoryMatcher(currentTitleHistory);
+  let titleHistoryEnabled = true;
 
   // Quick Add Keyword UI state
   let quickAddBtn = null;
@@ -67,7 +70,7 @@
     return el.parentElement;
   }
 
-  function collapseCard(cardEl, keyword) {
+  function collapseCard(cardEl, keyword, decision) {
     if (!cardEl || cardEl.getAttribute(CARD_MARK) === "1") return;
     
     // 获取被拦截的标题文本用于日志记录
@@ -89,7 +92,8 @@
     }
     
     // 记录拦截日志
-    log("拦截标题:", titleText || "未知标题", "(匹配关键词:", keyword || "未知关键词", ")");
+    const reason = decision.reason === "duplicate" ? "重复内容" : "关键词";
+    log("拦截标题:", titleText || "未知标题", `(匹配${reason}:`, keyword || "未知", ")");
     
     // 截取标题前20个字符
     let truncatedTitle = titleText || "未知标题";
@@ -102,6 +106,9 @@
 
     const placeholder = document.createElement("div");
     placeholder.className = "zhihu-filter__placeholder";
+    if (decision && decision.reason === "duplicate") {
+      placeholder.classList.add("zhihu-filter__placeholder--duplicate");
+    }
     placeholder.setAttribute("data-target", id);
     placeholder.textContent = `${keyword || "关键词"}（${truncatedTitle}）`;
 
@@ -137,19 +144,48 @@
   }
 
   function shouldCollapse(titleText) {
-    const res = MATCHER.matchText(titleText || "", currentMatchers);
-    return res && res.matched ? { yes: true, keyword: res.keyword } : { yes: false };
+    // 检查关键词匹配
+    const keywordRes = MATCHER.matchText(titleText || "", currentMatchers);
+    if (keywordRes && keywordRes.matched) {
+      log("关键词匹配:", titleText, "->", keywordRes.keyword);
+      return { yes: true, keyword: keywordRes.keyword, reason: "keyword" };
+    }
+    
+    // 检查标题历史重复
+    if (titleHistoryEnabled) {
+      const historyRes = MATCHER.matchTitleHistory(titleText || "", currentTitleHistoryMatcher);
+      if (historyRes && historyRes.matched) {
+        log("重复内容匹配:", titleText, "->", historyRes.keyword);
+        return { yes: true, keyword: historyRes.keyword, reason: "duplicate" };
+      }
+    }
+    
+    return { yes: false };
   }
 
-  function processAnchor(a) {
+  async function processAnchor(a) {
     if (!a) return;
     const titleText = extractTitleText(a);
     if (!titleText) return;
+    
+    log("处理标题:", titleText);
+    
+    // 先检查是否应该折叠（基于现有历史）
     const decision = shouldCollapse(titleText);
-    if (!decision.yes) return;
-    const card = findCardContainer(a);
-    if (!card) return;
-    collapseCard(card, decision.keyword);
+    if (decision.yes) {
+      const card = findCardContainer(a);
+      if (card) {
+        log("折叠卡片:", titleText, "原因:", decision.reason);
+        collapseCard(card, decision.keyword, decision);
+      }
+      return;
+    }
+    
+    // 如果不需要折叠，则记录标题到历史（如果启用）
+    if (titleHistoryEnabled) {
+      log("记录新标题:", titleText);
+      await recordTitleIfVisible(titleText);
+    }
   }
 
   function getQuestionBlocks(root) {
@@ -170,10 +206,10 @@
     }
   }
 
-  function scanRoot(root) {
+  async function scanRoot(root) {
     const anchors = getTitleAnchors(root);
     for (const a of anchors) {
-      try { processAnchor(a); } catch (e) { /* noop */ }
+      try { await processAnchor(a); } catch (e) { /* noop */ }
     }
     const blocks = getQuestionBlocks(root);
     for (const b of blocks) {
@@ -181,21 +217,27 @@
         const titleText = extractMetaTitle(b);
         if (!titleText) continue;
         const decision = shouldCollapse(titleText);
-        if (!decision.yes) continue;
+        if (!decision.yes) {
+          // 如果不需要折叠，记录到历史
+          if (titleHistoryEnabled) {
+            await recordTitleIfVisible(titleText);
+          }
+          continue;
+        }
         const card = findCardContainer(b);
         if (!card) continue;
-        collapseCard(card, decision.keyword);
+        collapseCard(card, decision.keyword, decision);
       } catch (e) { /* noop */ }
     }
   }
 
   function initObserver() {
-    const observer = new MutationObserver((mutations) => {
+    const observer = new MutationObserver(async (mutations) => {
       for (const m of mutations) {
         if (m.type === 'childList') {
           for (const node of m.addedNodes) {
             if (node && node.nodeType === 1) {
-              scanRoot(node);
+              await scanRoot(node);
             }
           }
         }
@@ -204,7 +246,7 @@
           if (target) {
             const anchors = getTitleAnchors(target);
             for (const a of anchors) {
-              try { processAnchor(a); } catch (_) {}
+              try { await processAnchor(a); } catch (_) {}
             }
           }
         }
@@ -221,6 +263,54 @@
 
   function rebuildMatchers() {
     currentMatchers = MATCHER.buildMatchers(currentKeywords);
+  }
+
+  function rebuildTitleHistoryMatcher() {
+    currentTitleHistoryMatcher = MATCHER.buildTitleHistoryMatcher(currentTitleHistory);
+  }
+
+  // 防抖函数，避免频繁记录
+  let recordTitleDebounceTimer = null;
+  const RECORD_DEBOUNCE_DELAY = 1000; // 1秒防抖
+
+  async function recordTitleIfVisible(title) {
+    if (!title || typeof title !== "string") return;
+    
+    try {
+      const added = await STORAGE.addTitleToHistory(title);
+      if (added) {
+        log("记录标题到历史:", title);
+        // 立即更新匹配器
+        currentTitleHistory = await STORAGE.loadTitleHistory();
+        rebuildTitleHistoryMatcher();
+      }
+    } catch (err) {
+      log("记录标题失败:", err);
+    }
+  }
+
+  async function initTitleHistory() {
+    try {
+      // 清理过期标题
+      await STORAGE.cleanExpiredTitles();
+      
+      // 加载标题历史
+      currentTitleHistory = await STORAGE.loadTitleHistory();
+      rebuildTitleHistoryMatcher();
+      
+      log("加载标题历史:", currentTitleHistory.length, "条记录");
+    } catch (err) {
+      log("初始化标题历史失败:", err);
+    }
+  }
+
+  function setupTitleRecording() {
+    // 监听标题历史变化
+    STORAGE.onTitleHistoryChanged((history) => {
+      currentTitleHistory = history || [];
+      rebuildTitleHistoryMatcher();
+      log("标题历史已更新:", currentTitleHistory.length, "条记录");
+    });
   }
 
   // ========== Quick Add Keyword UI ==========
@@ -339,14 +429,20 @@
       currentKeywords = keywords || [];
       rebuildMatchers();
       log("loaded", currentKeywords.length, "keywords");
-      scanRoot(document);
+      
+      // 初始化标题历史功能
+      await initTitleHistory();
+      setupTitleRecording();
+      
+      await scanRoot(document);
       initObserver();
-      STORAGE.onKeywordsChanged((kws) => {
+      
+      STORAGE.onKeywordsChanged(async (kws) => {
         currentKeywords = kws || [];
         rebuildMatchers();
         log("keywords updated:", currentKeywords.length);
         // re-scan newly loaded content only; keep existing collapsed state
-        scanRoot(document);
+        await scanRoot(document);
       });
     } catch (err) {
       log("init error", err);
