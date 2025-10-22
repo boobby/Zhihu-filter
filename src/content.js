@@ -5,6 +5,14 @@
 
   const CARD_MARK = "data-zhihu-filter-collapsed";
   const CARD_ID_ATTR = "data-zhihu-filter-id";
+  const TITLE_LINK_SELECTORS = [
+    'a[href^="/question/"]',
+    'a[href*="/question/"]',
+    'a.QuestionItem-title',
+    'a[data-za-detail-view-element_name="Title"]',
+    'h2 a[href^="/question/"]',
+    'h3 a[href^="/question/"]'
+  ].join(',');
 
   let currentKeywords = [];
   let currentMatchers = MATCHER.buildMatchers(currentKeywords);
@@ -17,6 +25,7 @@
   let quickAddHideTimer = null;
   let quickAddCurrentText = "";
 
+  // ========== 工具函数 ==========
   function log(...args) {
     try { console.log(LOG_PREFIX, ...args); } catch (_) {}
   }
@@ -25,17 +34,14 @@
     return Math.random().toString(36).slice(2, 10);
   }
 
+  function cleanText(text) {
+    return (text || '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  }
+
+  // ========== DOM 查询和文本提取 ==========
   function getTitleAnchors(root) {
     try {
-      // Extend selectors to cover more layouts (feed/search/hotlist/etc.)
-      return root.querySelectorAll([
-        'a[href^="/question/"]',
-        'a[href*="/question/"]',
-        'a.QuestionItem-title',
-        'a[data-za-detail-view-element_name="Title"]',
-        'h2 a[href^="/question/"]',
-        'h3 a[href^="/question/"]'
-      ].join(','));
+      return root.querySelectorAll(TITLE_LINK_SELECTORS);
     } catch (_) {
       return [];
     }
@@ -43,11 +49,11 @@
 
   function extractTitleText(anchor) {
     try {
-      const raw = (anchor.getAttribute('title')
+      const raw = anchor.getAttribute('title')
         || anchor.getAttribute('aria-label')
         || anchor.textContent
-        || '').replace(/[\u200B-\u200D\uFEFF]/g, '');
-      return raw.trim();
+        || '';
+      return cleanText(raw);
     } catch (_) {
       return '';
     }
@@ -70,35 +76,33 @@
     return el.parentElement;
   }
 
+  function extractCardTitle(cardEl) {
+    try {
+      const titleAnchor = cardEl.querySelector(TITLE_LINK_SELECTORS);
+      if (titleAnchor) {
+        return extractTitleText(titleAnchor);
+      }
+      // 尝试从 meta 标签获取
+      const metaTitle = cardEl.querySelector('meta[itemprop="name"]');
+      if (metaTitle) {
+        return cleanText(metaTitle.getAttribute('content'));
+      }
+    } catch (_) {}
+    return "未知标题";
+  }
+
+  // ========== 卡片折叠/展开 ==========
   function collapseCard(cardEl, keyword, decision) {
     if (!cardEl || cardEl.getAttribute(CARD_MARK) === "1") return;
     
-    // 获取被拦截的标题文本用于日志记录
-    let titleText = "";
-    try {
-      const titleAnchor = cardEl.querySelector('a[href^="/question/"], a[href*="/question/"], a.QuestionItem-title, a[data-za-detail-view-element_name="Title"], h2 a[href^="/question/"], h3 a[href^="/question/"]');
-      if (titleAnchor) {
-        titleText = extractTitleText(titleAnchor);
-      }
-      // 如果没找到链接标题，尝试从meta标签获取
-      if (!titleText) {
-        const metaTitle = cardEl.querySelector('meta[itemprop="name"]');
-        if (metaTitle) {
-          titleText = extractMetaTitle(cardEl);
-        }
-      }
-    } catch (e) {
-      titleText = "未知标题";
-    }
-    
-    // 记录拦截日志
+    const titleText = extractCardTitle(cardEl);
     const reason = decision.reason === "duplicate" ? "重复内容" : "关键词";
-    log("拦截标题:", titleText || "未知标题", `(匹配${reason}:`, keyword || "未知", ")");
+    log("拦截标题:", titleText, `(匹配${reason}:`, keyword || "未知", ")");
     
-    // 截取标题前20个字符
-    let truncatedTitle = titleText || "未知标题";
-    if (truncatedTitle.length > 30) {
-      truncatedTitle = truncatedTitle.substring(0, 30) + "...";
+    // 截取标题前30个字符
+    let displayTitle = titleText;
+    if (displayTitle.length > 30) {
+      displayTitle = displayTitle.substring(0, 30) + "...";
     }
     
     const id = cardEl.getAttribute(CARD_ID_ATTR) || genId();
@@ -110,7 +114,7 @@
       placeholder.classList.add("zhihu-filter__placeholder--duplicate");
     }
     placeholder.setAttribute("data-target", id);
-    placeholder.textContent = `${keyword || "关键词"}（${truncatedTitle}）`;
+    placeholder.textContent = `${keyword || "关键词"}（${displayTitle}）`;
 
     const btn = document.createElement("button");
     btn.type = "button";
@@ -143,19 +147,32 @@
     placeholderEl.remove();
   }
 
+  // ========== 匹配和过滤逻辑 ==========
+  function isHomePage() {
+    try {
+      const url = window.location.href;
+      return /^https:\/\/www\.zhihu\.com\/?(\?.*)?$/.test(url);
+    } catch (_) {
+      return true; // 默认允许重复内容检查以保持向后兼容
+    }
+  }
+
   function shouldCollapse(titleText) {
     // 检查关键词匹配
     const keywordRes = MATCHER.matchText(titleText || "", currentMatchers);
     if (keywordRes && keywordRes.matched) {
-      log("关键词匹配:", titleText, "->", keywordRes.keyword);
       return { yes: true, keyword: keywordRes.keyword, reason: "keyword" };
+    }
+    
+    // 只有首页才进行重复内容检查
+    if (!isHomePage()) {
+      return { yes: false };
     }
     
     // 检查标题历史重复
     if (titleHistoryEnabled) {
       const historyRes = MATCHER.matchTitleHistory(titleText || "", currentTitleHistoryMatcher);
       if (historyRes && historyRes.matched) {
-        log("重复内容匹配:", titleText, "->", historyRes.keyword);
         return { yes: true, keyword: historyRes.keyword, reason: "duplicate" };
       }
     }
@@ -199,13 +216,13 @@
   function extractMetaTitle(blockEl) {
     try {
       const meta = blockEl.querySelector('meta[itemprop="name"]');
-      const content = meta && meta.getAttribute('content');
-      return (content || '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+      return cleanText(meta && meta.getAttribute('content'));
     } catch (_) {
       return '';
     }
   }
 
+  // ========== 扫描和观察 ==========
   async function scanRoot(root) {
     const anchors = getTitleAnchors(root);
     for (const a of anchors) {
@@ -269,10 +286,7 @@
     currentTitleHistoryMatcher = MATCHER.buildTitleHistoryMatcher(currentTitleHistory);
   }
 
-  // 防抖函数，避免频繁记录
-  let recordTitleDebounceTimer = null;
-  const RECORD_DEBOUNCE_DELAY = 1000; // 1秒防抖
-
+  // ========== 标题历史记录 ==========
   async function recordTitleIfVisible(title) {
     if (!title || typeof title !== "string") return;
     
@@ -313,16 +327,9 @@
     });
   }
 
-  // ========== Quick Add Keyword UI ==========
+  // ========== 快速添加关键词 UI ==========
   function sanitizeSelectionText(raw) {
-    try {
-      return String(raw || "")
-        .replace(/[\u200B-\u200D\uFEFF]/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
-    } catch (_) {
-      return "";
-    }
+    return cleanText(String(raw || "").replace(/\s+/g, " "));
   }
 
   function getCurrentSelectionText() {
@@ -469,15 +476,18 @@
     }
   }
 
+  // ========== 初始化 ==========
+  function setupEventListeners() {
+    document.addEventListener("selectionchange", maybeShowQuickAddForSelection);
+    document.addEventListener("mouseup", maybeShowQuickAddForSelection, true);
+    document.addEventListener("keyup", maybeShowQuickAddForSelection, true);
+  }
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
-    document.addEventListener("selectionchange", maybeShowQuickAddForSelection);
-    document.addEventListener("mouseup", maybeShowQuickAddForSelection, true);
-    document.addEventListener("keyup", maybeShowQuickAddForSelection, true);
+    setupEventListeners();
   } else {
     init();
-    document.addEventListener("selectionchange", maybeShowQuickAddForSelection);
-    document.addEventListener("mouseup", maybeShowQuickAddForSelection, true);
-    document.addEventListener("keyup", maybeShowQuickAddForSelection, true);
+    setupEventListeners();
   }
 })();
