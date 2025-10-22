@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Zhihu Keyword Filter",
-  "version": "0.1.0",
-  "description": "Collapse Zhihu question cards whose titles match your blocked keywords.",
+  "name": "Zhihu Content Filter & Ad Remover",
+  "version": "0.2.0",
+  "description": "Filter Zhihu content by keywords and browsing history, remove ads automatically.",
   "permissions": ["storage"],
-  "host_permissions": ["https://www.zhihu.com/*"],
+  "host_permissions": ["https://*.zhihu.com/*"],
   "content_scripts": [
     {
-      "matches": ["https://www.zhihu.com/*"],
+      "matches": ["https://*.zhihu.com/*"],
       "js": [
         "src/storage.js",
         "src/matcher.js",

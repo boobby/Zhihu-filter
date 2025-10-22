@@ -1,8 +1,13 @@
-# Zhihu Keyword Filter
+# Zhihu Content Filter & Ad Remover
 
-Chrome MV3 extension that collapses Zhihu question cards whose titles match your blocked keywords or have been seen before.
+Chrome MV3 extension that collapses Zhihu question cards whose titles match your blocked keywords or have been seen before, and removes ads automatically.
 
 ## Features
+
+### Ad Removal
+- Automatically remove Zhihu ad elements from the page
+- Silent operation with no user interaction required
+- Supports common ad containers: `Pc-feedAd`, `advert-signpc-label`
 
 ### Keyword Filtering
 - Collapse question cards whose titles match blocked keywords
@@ -34,7 +39,8 @@ Chrome MV3 extension that collapses Zhihu question cards whose titles match your
 - Maximum 1000 history records
 
 ## How it works
-- On `https://www.zhihu.com/*`, the content script scans question title anchors
+- On `https://*.zhihu.com/*`, the content script scans question title anchors
+- Ad elements are silently removed before content filtering
 - Cards are collapsed if they match:
   1. Blocked keywords (blue placeholder)
   2. Previously seen titles within 60 days (orange placeholder)

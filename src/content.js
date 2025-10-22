@@ -5,6 +5,7 @@
 
   const CARD_MARK = "data-zhihu-filter-collapsed";
   const CARD_ID_ATTR = "data-zhihu-filter-id";
+  const AD_SELECTORS = 'div.Pc-feedAd, div.advert-signpc-label';
   const TITLE_LINK_SELECTORS = [
     'a[href^="/question/"]',
     'a[href*="/question/"]',
@@ -44,6 +45,18 @@
       return root.querySelectorAll(TITLE_LINK_SELECTORS);
     } catch (_) {
       return [];
+    }
+  }
+
+  function removeAds(root) {
+    try {
+      const ads = root.querySelectorAll(AD_SELECTORS);
+      for (const ad of ads) {
+        log("移除广告元素:", ad.className);
+        ad.remove();
+      }
+    } catch (err) {
+      log("移除广告失败:", err);
     }
   }
 
@@ -224,6 +237,9 @@
 
   // ========== 扫描和观察 ==========
   async function scanRoot(root) {
+    // 首先移除广告
+    removeAds(root);
+    
     const anchors = getTitleAnchors(root);
     for (const a of anchors) {
       try { await processAnchor(a); } catch (e) { /* noop */ }
